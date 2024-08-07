@@ -14,6 +14,7 @@ proc-macro = true
 [features]
 anchor-debug = ["anchor-syn/anchor-debug"]
 event-cpi = ["anchor-syn/event-cpi"]
+custom-event-handler = ["anchor-syn/custom-event-handler"]
 
 [dependencies]
 anchor-syn = { path = "../../syn", version = "0.28.0", features = ["hash"] }

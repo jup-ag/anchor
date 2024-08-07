@@ -17,6 +17,7 @@ default = []
 anchor-debug = []
 seeds = []
 event-cpi = []
+custom-event-handler = []
 
 [dependencies]
 anyhow = "1"

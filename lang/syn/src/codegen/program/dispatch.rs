@@ -86,6 +86,7 @@ pub fn generate(program: &Program) -> proc_macro2::TokenStream {
                         Err(anchor_lang::error::ErrorCode::IdlInstructionStub.into())
                     }
                 }
+                #[cfg(not(feature = "custom-event-handler"))]
                 anchor_lang::event::EVENT_IX_TAG_LE => {
                     #event_cpi_handler
                 }
