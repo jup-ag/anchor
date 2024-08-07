@@ -86,9 +86,10 @@ pub fn generate(program: &Program) -> proc_macro2::TokenStream {
                         Err(anchor_lang::error::ErrorCode::IdlInstructionStub.into())
                     }
                 }
-                anchor_lang::event::EVENT_IX_TAG_LE => {
-                    #event_cpi_handler
-                }
+                // We disable the event handler arm in order to implement our own
+                // anchor_lang::event::EVENT_IX_TAG_LE => {
+                //     #event_cpi_handler
+                // }
                 _ => {
                     #fallback_fn
                 }
