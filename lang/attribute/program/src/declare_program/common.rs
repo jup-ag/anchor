@@ -42,8 +42,32 @@ pub fn convert_idl_type_to_syn_type(ty: &IdlType) -> syn::Type {
     syn::parse_str(&convert_idl_type_to_str(ty)).unwrap()
 }
 
+pub fn convert_idl_type_to_syn_type_with_depth(
+    ty: &IdlType,
+    ty_defs: &[IdlTypeDef],
+    current_depth: usize,
+    max_depth: usize,
+) -> syn::Type {
+    syn::parse_str(&convert_idl_type_to_str_with_depth(
+        ty,
+        ty_defs,
+        current_depth,
+        max_depth,
+    ))
+    .unwrap()
+}
+
 // TODO: Impl `ToString` for `IdlType`
 pub fn convert_idl_type_to_str(ty: &IdlType) -> String {
+    convert_idl_type_to_str_with_depth(ty, &[], 0, 10)
+}
+
+pub fn convert_idl_type_to_str_with_depth(
+    ty: &IdlType,
+    ty_defs: &[IdlTypeDef],
+    current_depth: usize,
+    max_depth: usize,
+) -> String {
     match ty {
         IdlType::Bool => "bool".into(),
         IdlType::U8 => "u8".into(),
@@ -63,31 +87,50 @@ pub fn convert_idl_type_to_str(ty: &IdlType) -> String {
         IdlType::Bytes => "Vec<u8>".into(),
         IdlType::String => "String".into(),
         IdlType::Pubkey => "Pubkey".into(),
-        IdlType::Option(ty) => format!("Option<{}>", convert_idl_type_to_str(ty)),
-        IdlType::Vec(ty) => format!("Vec<{}>", convert_idl_type_to_str(ty)),
+        IdlType::Option(ty) => format!(
+            "Option<{}>",
+            convert_idl_type_to_str_with_depth(ty, ty_defs, current_depth, max_depth)
+        ),
+        IdlType::Vec(ty) => format!(
+            "Vec<{}>",
+            convert_idl_type_to_str_with_depth(ty, ty_defs, current_depth, max_depth)
+        ),
         IdlType::Array(ty, len) => format!(
             "[{}; {}]",
-            convert_idl_type_to_str(ty),
+            convert_idl_type_to_str_with_depth(ty, ty_defs, current_depth, max_depth),
             match len {
                 IdlArrayLen::Generic(len) => len.into(),
                 IdlArrayLen::Value(len) => len.to_string(),
             }
         ),
-        IdlType::Defined { name, generics } => generics
-            .iter()
-            .map(|generic| match generic {
-                IdlGenericArg::Type { ty } => convert_idl_type_to_str(ty),
-                IdlGenericArg::Const { value } => value.into(),
-            })
-            .reduce(|mut acc, cur| {
-                if !acc.is_empty() {
-                    acc.push(',');
-                }
-                acc.push_str(&cur);
-                acc
-            })
-            .map(|generics| format!("{name}<{generics}>"))
-            .unwrap_or(name.into()),
+        IdlType::Defined { name, generics } => {
+            if current_depth >= max_depth {
+                // Return the type name without expansion to prevent infinite recursion
+                // This allows the type to still be referenced but not fully expanded
+                name.clone()
+            } else {
+                generics
+                    .iter()
+                    .map(|generic| match generic {
+                        IdlGenericArg::Type { ty } => convert_idl_type_to_str_with_depth(
+                            ty,
+                            ty_defs,
+                            current_depth + 1,
+                            max_depth,
+                        ),
+                        IdlGenericArg::Const { value } => value.into(),
+                    })
+                    .reduce(|mut acc, cur| {
+                        if !acc.is_empty() {
+                            acc.push(',');
+                        }
+                        acc.push_str(&cur);
+                        acc
+                    })
+                    .map(|generics| format!("{name}<{generics}>"))
+                    .unwrap_or(name.into())
+            }
+        }
         IdlType::Generic(ty) => ty.into(),
         _ => unimplemented!("{ty:?}"),
     }
@@ -96,6 +139,15 @@ pub fn convert_idl_type_to_str(ty: &IdlType) -> String {
 pub fn convert_idl_type_def_to_ts(
     ty_def: &IdlTypeDef,
     ty_defs: &[IdlTypeDef],
+) -> proc_macro2::TokenStream {
+    convert_idl_type_def_to_ts_with_depth(ty_def, ty_defs, 0, 10)
+}
+
+pub fn convert_idl_type_def_to_ts_with_depth(
+    ty_def: &IdlTypeDef,
+    ty_defs: &[IdlTypeDef],
+    current_depth: usize,
+    max_depth: usize,
 ) -> proc_macro2::TokenStream {
     let name = format_ident!("{}", ty_def.name);
     let docs = gen_docs(&ty_def.docs);
@@ -193,7 +245,12 @@ pub fn convert_idl_type_def_to_ts(
                 |fields| {
                     let fields = fields.iter().map(|field| {
                         let name = format_ident!("{}", field.name);
-                        let ty = convert_idl_type_to_syn_type(&field.ty);
+                        let ty = convert_idl_type_to_syn_type_with_depth(
+                            &field.ty,
+                            ty_defs,
+                            current_depth,
+                            max_depth,
+                        );
                         quote! { pub #name : #ty }
                     });
                     quote! {
@@ -205,7 +262,14 @@ pub fn convert_idl_type_def_to_ts(
                 |tys| {
                     let tys = tys
                         .iter()
-                        .map(convert_idl_type_to_syn_type)
+                        .map(|ty| {
+                            convert_idl_type_to_syn_type_with_depth(
+                                ty,
+                                ty_defs,
+                                current_depth,
+                                max_depth,
+                            )
+                        })
                         .map(|ty| quote! { pub #ty });
 
                     quote! {
@@ -230,7 +294,12 @@ pub fn convert_idl_type_def_to_ts(
                     |fields| {
                         let fields = fields.iter().map(|field| {
                             let name = format_ident!("{}", field.name);
-                            let ty = convert_idl_type_to_syn_type(&field.ty);
+                            let ty = convert_idl_type_to_syn_type_with_depth(
+                                &field.ty,
+                                ty_defs,
+                                current_depth,
+                                max_depth,
+                            );
                             quote! { #name : #ty }
                         });
                         quote! {
@@ -240,7 +309,14 @@ pub fn convert_idl_type_def_to_ts(
                         }
                     },
                     |tys| {
-                        let tys = tys.iter().map(convert_idl_type_to_syn_type);
+                        let tys = tys.iter().map(|ty| {
+                            convert_idl_type_to_syn_type_with_depth(
+                                ty,
+                                ty_defs,
+                                current_depth,
+                                max_depth,
+                            )
+                        });
                         quote! {
                             #variant_name (#(#tys,)*)
                         }
@@ -258,7 +334,8 @@ pub fn convert_idl_type_def_to_ts(
             }
         }
         IdlTypeDefTy::Type { alias } => {
-            let alias = convert_idl_type_to_syn_type(alias);
+            let alias =
+                convert_idl_type_to_syn_type_with_depth(alias, ty_defs, current_depth, max_depth);
             quote! {
                 #docs
                 pub type #name = #alias;
@@ -291,10 +368,27 @@ fn can_derive_default(ty_def: &IdlTypeDef, ty_defs: &[IdlTypeDef]) -> bool {
 }
 
 fn can_derive_copy_ty(ty: &IdlType, ty_defs: &[IdlTypeDef]) -> bool {
+    can_derive_copy_ty_with_depth(ty, ty_defs, 0, 10)
+}
+
+fn can_derive_copy_ty_with_depth(
+    ty: &IdlType,
+    ty_defs: &[IdlTypeDef],
+    current_depth: usize,
+    max_depth: usize,
+) -> bool {
+    if current_depth >= max_depth {
+        // For depth-limited types, be conservative and assume they can't derive Copy
+        // since we can't fully analyze their structure
+        return false;
+    }
+
     match ty {
-        IdlType::Option(inner) => can_derive_copy_ty(inner, ty_defs),
+        IdlType::Option(inner) => {
+            can_derive_copy_ty_with_depth(inner, ty_defs, current_depth + 1, max_depth)
+        }
         IdlType::Array(inner, len) => {
-            if !can_derive_copy_ty(inner, ty_defs) {
+            if !can_derive_copy_ty_with_depth(inner, ty_defs, current_depth + 1, max_depth) {
                 return false;
             }
 
@@ -314,11 +408,30 @@ fn can_derive_copy_ty(ty: &IdlType, ty_defs: &[IdlTypeDef]) -> bool {
 }
 
 fn can_derive_default_ty(ty: &IdlType, ty_defs: &[IdlTypeDef]) -> bool {
+    can_derive_default_ty_with_depth(ty, ty_defs, 0, 10)
+}
+
+fn can_derive_default_ty_with_depth(
+    ty: &IdlType,
+    ty_defs: &[IdlTypeDef],
+    current_depth: usize,
+    max_depth: usize,
+) -> bool {
+    if current_depth >= max_depth {
+        // For depth-limited types, be conservative and assume they can't derive Default
+        // since we can't fully analyze their structure
+        return false;
+    }
+
     match ty {
-        IdlType::Option(inner) => can_derive_default_ty(inner, ty_defs),
-        IdlType::Vec(inner) => can_derive_default_ty(inner, ty_defs),
+        IdlType::Option(inner) => {
+            can_derive_default_ty_with_depth(inner, ty_defs, current_depth + 1, max_depth)
+        }
+        IdlType::Vec(inner) => {
+            can_derive_default_ty_with_depth(inner, ty_defs, current_depth + 1, max_depth)
+        }
         IdlType::Array(inner, len) => {
-            if !can_derive_default_ty(inner, ty_defs) {
+            if !can_derive_default_ty_with_depth(inner, ty_defs, current_depth + 1, max_depth) {
                 return false;
             }
 
